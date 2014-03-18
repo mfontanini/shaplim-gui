@@ -14,25 +14,76 @@
 #  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 #  MA 02110-1301, USA.
 
-
 import sys
 import api
 import gtk
 import time
 import threading
+import copy
+import Queue
 
 def stock_toolbar_image(stock):
-    icon = gtk.Image() # icon widget
+    icon = gtk.Image()
     icon.set_from_stock(stock, gtk.ICON_SIZE_DIALOG)
     return icon
+
+class Command:
+    def __init__(self, function, params=None, requires_timestamp=False):
+        self.function = function
+        self.params = params if params is not None else []
+        self.requires_timestamp = requires_timestamp
+
+class CommandManager:
+    def __init__(self, new_events_callback, last_timestamp, api):
+        self.queue = Queue.Queue()
+        self.callback = new_events_callback
+        self.last_timestamp = last_timestamp
+        self.api = api
+        self.running = True
+        threading.Thread(target=self.run_loop).start()
+        
+    def add(self, cmd):
+        self.queue.put(cmd)
+    
+    def stop(self):
+        self.running = False
+        self.add(None)
+    
+    def reload_state(self):
+        self.queue.put(None)
+    
+    def get_new_events(self):
+        events_data = self.api.new_events(self.last_timestamp)
+        self.last_timestamp = events_data["timestamp"]
+        self.callback(events_data["events"])
+
+    def run_loop(self):
+        while True:
+            try:
+                cmd = self.queue.get(timeout=0.2)
+                if cmd is None:
+                    self.get_new_events()
+                else:
+                    params = cmd.params
+                    if cmd.requires_timestamp:
+                        params.append(timestamp)
+                    apply(cmd.function, params)
+                self.queue.task_done()
+            except Queue.Empty as ex:
+                if not self.running:
+                    return
+                else:
+                    self.get_new_events()
+            
+
 
 class ShaplimGTK:
     def __init__(self):
         self.running = True
         self.api = api.API('127.0.0.1', 1337)
-        self.cond_variable = threading.Condition()
         window = gtk.Window()
         window.set_default_size(800, 600)
+        self.last_selected_index = None
         
         top_box = self.make_top_box()
         
@@ -42,62 +93,55 @@ class ShaplimGTK:
         window.connect("destroy", self.destroy)
         window.add(top_box)
         window.show_all()
-        threading.Thread(target=self.poll_events_loop).start()
+        self.cmd_manager = CommandManager(self.handle_new_events, self.last_timestamp, self.api)
     
     def destroy(self, x):
         gtk.main_quit()
-        with self.cond_variable:
-            self.running = False
-            self.cond_variable.notify()
+        self.cmd_manager.stop()
     
     def load_playlist(self):
         playlist_data = self.api.show_playlist()
         self.last_timestamp = playlist_data["timestamp"]
         for song in playlist_data["songs"]:
-            self.playlist.append([song])
+            self.playlist.append([None, song])
         if playlist_data["current"] != -1:
-            self.playlist_view.set_cursor(playlist_data["current"])
+            self.set_current_song(playlist_data["current"])
     
     def reload_state(self):
-        with self.cond_variable:
-            self.cond_variable.notify()
+        self.cmd_manager.reload_state()
     
-    def poll_events_loop(self):
-        while True:
-            with self.cond_variable:
-                if self.running == False:
-                    return
-                self.cond_variable.wait(0.5)
-                if self.running == False:
-                    return
-            self.poll_events()
+    def set_current_song(self, index):
+        if self.last_selected_index is not None:
+            iterator = self.playlist.get_iter(self.last_selected_index)
+            self.playlist.set_value(iterator, 0, None)
+        self.last_selected_index = index
+        iterator = self.playlist.get_iter(index)
+        pixbuf = self.playlist_view.render_icon(gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_MENU)
+        self.playlist.set_value(iterator, 0, pixbuf)
     
-    def poll_events(self):
-        events_data = self.api.new_events(self.last_timestamp)
-        self.last_timestamp = events_data["timestamp"]
-        for event in events_data["events"]:
+    def handle_new_events(self, events):
+        for event in events:
             if event["type"] == "add_songs":
                 for song in event["songs"]:
-                    self.playlist.append([song])
+                    self.playlist.append([None, song])
             elif event["type"] == "play_song":
-                self.playlist_view.set_cursor(event["index"])
-            
+                self.set_current_song(event["index"])
     
     def prev_button_clicked(self, widget, event=None):
         self.reload_state()
-        self.api.previous_song()
+        self.cmd_manager.add(Command(self.api.previous_song))
     
     def play_button_clicked(self, widget, event=None):
         self.reload_state()
-        self.api.play()
+        self.cmd_manager.add(Command(self.api.play))
     
     def pause_button_clicked(self, widget, event=None):
         self.reload_state()
-        self.api.pause()
+        self.cmd_manager.add(Command(self.api.pause))
     
     def next_button_clicked(self, widget, event=None):
         self.reload_state()
-        self.api.next_song()
+        self.cmd_manager.add(Command(self.api.next_song))
     
     def make_controls_box(self):
         toolbar = gtk.Toolbar()
@@ -116,7 +160,7 @@ class ShaplimGTK:
         self.shared_content_view = gtk.IconView(self.shared_content)
         self.shared_content_view.set_text_column(0)
         self.shared_content_view.set_pixbuf_column(1)
-        self.shared_content_view.set_item_width(100)
+        self.shared_content_view.set_item_width(120)
         
         cell = self.shared_content_view.get_cells()[0]
         self.shared_content_view.set_cell_data_func(cell, retrieve_shared_name)
@@ -134,24 +178,37 @@ class ShaplimGTK:
         box.pack_start(self.make_controls_box(), False)
         return box
     
-    def make_top_box(self):
-        self.playlist = gtk.ListStore(str)
+    def make_playlist(self):
+        self.playlist = gtk.ListStore(gtk.gdk.Pixbuf, str)
         self.playlist_view = gtk.TreeView(self.playlist)
         
-        box = gtk.HBox(False)
-        box.pack_start(self.make_controls_and_folders_box(), True)
-        box.pack_start(self.playlist_view, False)
-        
-        column = gtk.TreeViewColumn("Playlist")
-        column.set_property("min-width", 230)
-        column.set_property("sizing", gtk.TREE_VIEW_COLUMN_FIXED)
+        renderer = gtk.CellRendererPixbuf()
+        column = gtk.TreeViewColumn('', renderer, pixbuf=0)
         self.playlist_view.append_column(column)
         
-        cell = gtk.CellRendererText()
-        column.pack_start(cell, False)
-        column.add_attribute(cell, "text", 0)
-        column.set_cell_data_func(cell, retrieve_filename)
-        return box
+        renderer = gtk.CellRendererText()
+        column = gtk.TreeViewColumn("", renderer, text=1)
+        column.set_property("min-width", 230)
+        column.set_property("sizing", gtk.TREE_VIEW_COLUMN_FIXED)
+        column.set_cell_data_func(renderer, retrieve_filename)
+        self.playlist_view.append_column(column)
+        self.playlist_view.connect("row-activated", self.on_playlist_element_activated)
+
+        
+        scroll = gtk.ScrolledWindow()
+        scroll.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
+        scroll.add(self.playlist_view)
+        return scroll
+    
+    def make_top_box(self):
+        box = gtk.HBox(False)
+        box.pack_start(gtk.VSeparator(), False)
+        box.pack_start(self.make_playlist(), True)
+        
+        paned = gtk.HPaned()
+        paned.pack1(self.make_controls_and_folders_box(), True)
+        paned.pack2(box, False)
+        return paned
     
     def show_shared_content(self, dirs, files, parent=None):
         self.shared_content.clear()
@@ -168,6 +225,14 @@ class ShaplimGTK:
             pixbuf = self.shared_content_view.render_icon(gtk.STOCK_FILE, gtk.ICON_SIZE_DIALOG)
             self.shared_content.append([parent + f, pixbuf, False])
     
+    def get_file_name(self, path):
+        return path.split('/')[-1]
+    
+    def get_dir_name(self, path):
+        return '/'.join(path.split('/')[:-1])
+    
+    # Events
+    
     def on_shared_content_clicked(self, widget, item):
         model = widget.get_model()
         # Is it a directory?
@@ -177,7 +242,7 @@ class ShaplimGTK:
             if directory.split('/')[-1] == '..':
                 directory = '/'.join(directory.split('/')[:-2])
             if directory == '':
-                data = self.show_shared_content(self.api.list_shared_directories()["directories"], [])
+                data = self.api.list_shared_directories()
                 data["files"] = ''
                 directory = None
             else:
@@ -186,26 +251,28 @@ class ShaplimGTK:
         else:
             dir_name = self.get_dir_name(model[item][0])
             file_name = self.get_file_name(model[item][0])
-            self.api.add_shared_songs(dir_name, [file_name])
+            self.cmd_manager.add(Command(self.api.add_shared_songs, [ dir_name, [file_name] ]))
             self.reload_state()
+        
     
-    def get_file_name(self, path):
-        return path.split('/')[-1]
-    
-    def get_dir_name(self, path):
-        return '/'.join(path.split('/')[:-1])
+    def on_playlist_element_activated(self, treeview, path, view_column):
+        
+        return False
+
 
 def retrieve_shared_name(column, cell, model, iter):
     pyobj = model.get_value(iter, 0)
     name = str(pyobj).split('/')[-1]
     if name.endswith('.mp3'):
         name = name[:-4]
+    if len(name) > 60:
+        name = name[:58] + '...'
     cell.set_property('text', name)
     return
 
 
 def retrieve_filename(treeviewcolumn, cell, model, iter):
-    pyobj = model.get_value(iter, 0)
+    pyobj = model.get_value(iter, 1)
     name = str(pyobj).split('/')[-1]
     name = '.'.join(name.split('.')[:-1])
     cell.set_property('text', name)
