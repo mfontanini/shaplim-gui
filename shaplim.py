@@ -21,6 +21,7 @@ import time
 import threading
 import copy
 import Queue
+import gobject
 
 def stock_toolbar_image(stock):
     icon = gtk.Image()
@@ -55,7 +56,7 @@ class CommandManager:
     def get_new_events(self):
         events_data = self.api.new_events(self.last_timestamp)
         self.last_timestamp = events_data["timestamp"]
-        self.callback(events_data["events"])
+        gobject.idle_add(self.callback, events_data["events"])
 
     def run_loop(self):
         while True:
@@ -66,7 +67,7 @@ class CommandManager:
                 else:
                     params = cmd.params
                     if cmd.requires_timestamp:
-                        params.append(timestamp)
+                        params.append(self.last_timestamp)
                     apply(cmd.function, params)
                 self.queue.task_done()
             except Queue.Empty as ex:
@@ -95,6 +96,10 @@ class ShaplimGTK:
         window.show_all()
         self.cmd_manager = CommandManager(self.handle_new_events, self.last_timestamp, self.api)
     
+    def remove_songs(self, indexes):
+        self.cmd_manager.add(Command(self.api.delete_songs, [indexes], requires_timestamp=True))
+        self.reload_state()
+    
     def destroy(self, x):
         gtk.main_quit()
         self.cmd_manager.stop()
@@ -114,6 +119,9 @@ class ShaplimGTK:
         if self.last_selected_index is not None:
             iterator = self.playlist.get_iter(self.last_selected_index)
             self.playlist.set_value(iterator, 0, None)
+        if index == -1:
+            self.last_selected_index = None
+            return
         self.last_selected_index = index
         iterator = self.playlist.get_iter(index)
         pixbuf = self.playlist_view.render_icon(gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_MENU)
@@ -126,22 +134,29 @@ class ShaplimGTK:
                     self.playlist.append([None, song])
             elif event["type"] == "play_song":
                 self.set_current_song(event["index"])
+            elif event["type"] == "delete_songs":
+                indexes = event["indexes"]
+                indexes.sort(reverse=True)
+                for index in indexes:
+                    self.playlist.remove(self.playlist[index].iter)
+                if self.last_selected_index in indexes:
+                    self.last_selected_index = None
     
     def prev_button_clicked(self, widget, event=None):
-        self.reload_state()
         self.cmd_manager.add(Command(self.api.previous_song))
+        self.reload_state()
     
     def play_button_clicked(self, widget, event=None):
-        self.reload_state()
         self.cmd_manager.add(Command(self.api.play))
+        self.reload_state()
     
     def pause_button_clicked(self, widget, event=None):
-        self.reload_state()
         self.cmd_manager.add(Command(self.api.pause))
+        self.reload_state()
     
     def next_button_clicked(self, widget, event=None):
-        self.reload_state()
         self.cmd_manager.add(Command(self.api.next_song))
+        self.reload_state()
     
     def make_controls_box(self):
         toolbar = gtk.Toolbar()
@@ -158,9 +173,11 @@ class ShaplimGTK:
     def make_shared_folders_view_control(self):
         self.shared_content = gtk.ListStore(str, gtk.gdk.Pixbuf, bool)
         self.shared_content_view = gtk.IconView(self.shared_content)
+        self.shared_content_view.set_selection_mode(gtk.SELECTION_MULTIPLE)
         self.shared_content_view.set_text_column(0)
         self.shared_content_view.set_pixbuf_column(1)
         self.shared_content_view.set_item_width(120)
+        self.shared_content_view.connect('key-press-event', self.shared_content_key_press)
         
         cell = self.shared_content_view.get_cells()[0]
         self.shared_content_view.set_cell_data_func(cell, retrieve_shared_name)
@@ -181,6 +198,9 @@ class ShaplimGTK:
     def make_playlist(self):
         self.playlist = gtk.ListStore(gtk.gdk.Pixbuf, str)
         self.playlist_view = gtk.TreeView(self.playlist)
+        self.playlist_view.set_headers_visible(False)
+        self.playlist_view.get_selection().set_mode(gtk.SELECTION_MULTIPLE)
+        self.playlist_view.connect('key-press-event', self.playlist_key_press)
         
         renderer = gtk.CellRendererPixbuf()
         column = gtk.TreeViewColumn('', renderer, pixbuf=0)
@@ -193,12 +213,19 @@ class ShaplimGTK:
         column.set_cell_data_func(renderer, retrieve_filename)
         self.playlist_view.append_column(column)
         self.playlist_view.connect("row-activated", self.on_playlist_element_activated)
-
         
         scroll = gtk.ScrolledWindow()
         scroll.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
         scroll.add(self.playlist_view)
-        return scroll
+        
+        label = gtk.Label("<b>Playlist</b>") 
+        label.set_use_markup(True)
+        
+        vbox = gtk.VBox()
+        vbox.pack_start(label, False)
+        vbox.pack_start(gtk.HSeparator(), False)
+        vbox.pack_start(scroll, True)
+        return vbox
     
     def make_top_box(self):
         box = gtk.HBox(False)
@@ -233,6 +260,19 @@ class ShaplimGTK:
     
     # Events
     
+    def playlist_key_press(self, view, event):
+        if event.keyval == gtk.gdk.keyval_from_name("Delete"):
+            (model, pathlist) = self.playlist_view.get_selection().get_selected_rows()
+            pathlist = map(lambda i: i[0], pathlist)
+            self.remove_songs(pathlist)
+        
+    def shared_content_key_press(self, view, event):
+        # This is Enter, fix me plx
+        if event.keyval == 65293:
+            self.add_selected_songs()
+            return True
+        return False
+    
     def on_shared_content_clicked(self, widget, item):
         model = widget.get_model()
         # Is it a directory?
@@ -249,14 +289,23 @@ class ShaplimGTK:
                 data = self.api.list_directory(directory)
             self.show_shared_content(data["directories"], data["files"], directory)
         else:
-            dir_name = self.get_dir_name(model[item][0])
-            file_name = self.get_file_name(model[item][0])
-            self.cmd_manager.add(Command(self.api.add_shared_songs, [ dir_name, [file_name] ]))
-            self.reload_state()
-        
+            self.add_selected_songs()
+
+    def add_selected_songs(self):
+        selected = self.shared_content_view.get_selected_items()
+        selected = filter(lambda i: not self.shared_content[i][2], selected)
+        selected = map(lambda i: self.shared_content[i[0]][0], selected)
+        dir_name = set(map(self.get_dir_name, selected))
+        if len(dir_name) > 1:
+            return False
+        dir_name = dir_name.pop()
+        file_names = map(self.get_file_name, selected)
+        file_names.sort()
+        self.shared_content_view.unselect_all()
+        self.cmd_manager.add(Command(self.api.add_shared_songs, [ dir_name, file_names ]))
+        self.reload_state()
     
     def on_playlist_element_activated(self, treeview, path, view_column):
-        
         return False
 
 
@@ -280,5 +329,5 @@ def retrieve_filename(treeviewcolumn, cell, model, iter):
 
 if __name__ == "__main__":
     app = ShaplimGTK()
-    gtk.gdk.threads_init()
+    gobject.threads_init()
     gtk.main()

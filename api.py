@@ -75,11 +75,11 @@ class API:
     def player_status(self):
         return self.__send_command('player_status')
     
-    def delete_song(self, timestamp, index):
-        json_params = { 'timestamp' : int(timestamp), 'index' : int(index) }
-        return self.__send_command('delete_song', json_params)
+    def delete_songs(self, indexes, timestamp):
+        json_params = { 'timestamp' : int(timestamp), 'indexes' : indexes }
+        return self.__send_command('delete_songs', json_params)
     
-    def set_current_song(self, timestamp, index):
+    def set_current_song(self, index, timestamp):
         json_params = { 'timestamp' : int(timestamp), 'index' : int(index) }
         return self.__send_command('set_current_song', json_params)
     
