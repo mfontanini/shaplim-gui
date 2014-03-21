@@ -84,7 +84,7 @@ class API:
         return self.__send_command('set_current_song', json_params)
     
     def song_info(self, path):
-        return self.__send_command('song_info', path)
+        return self.__send_command('song_info', { "song" : path })
     
     def add_shared_songs(self, base_path, songs):
         json_params = { 'base_path' : base_path, 'songs' : songs }

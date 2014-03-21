@@ -28,21 +28,43 @@ def stock_toolbar_image(stock):
     icon.set_from_stock(stock, gtk.ICON_SIZE_DIALOG)
     return icon
 
+def make_markup_label(text):
+    label = gtk.Label(text) 
+    label.set_use_markup(True)
+    return label
+
+def make_song_control_label(text):
+    label = make_markup_label(text)
+    label.set_alignment(xalign=0, yalign=0)
+    
+    return label 
+
+def make_song_info_label(text):
+    label = make_markup_label(text)
+    label.set_alignment(xalign=0, yalign=0)
+    align = gtk.Alignment()
+    align.set_padding(0, 0, 20, 0)
+    align.add(label)
+    return align 
+
 class Command:
-    def __init__(self, function, params=None, requires_timestamp=False):
+    def __init__(self, function, params=None, requires_timestamp=False, callback=None):
         self.function = function
         self.params = params if params is not None else []
         self.requires_timestamp = requires_timestamp
+        self.callback = callback
 
 class CommandManager:
-    def __init__(self, new_events_callback, last_timestamp, api):
+    def __init__(self, new_events_callback, api):
         self.queue = Queue.Queue()
         self.callback = new_events_callback
-        self.last_timestamp = last_timestamp
         self.api = api
         self.running = True
+    
+    def run(self, last_timestamp):
+        self.last_timestamp = last_timestamp
         threading.Thread(target=self.run_loop).start()
-        
+    
     def add(self, cmd):
         self.queue.put(cmd)
     
@@ -68,7 +90,9 @@ class CommandManager:
                     params = cmd.params
                     if cmd.requires_timestamp:
                         params.append(self.last_timestamp)
-                    apply(cmd.function, params)
+                    result = apply(cmd.function, params)
+                    if cmd.callback:
+                        cmd.callback(result)
                 self.queue.task_done()
             except Queue.Empty as ex:
                 if not self.running:
@@ -88,13 +112,14 @@ class ShaplimGTK:
         
         top_box = self.make_top_box()
         
-        self.load_playlist()
+        self.cmd_manager = CommandManager(self.handle_new_events, self.api)
+        timestamp = self.load_playlist()
+        self.cmd_manager.run(timestamp)
         
         self.show_shared_content(self.api.list_shared_directories()["directories"], [])
         window.connect("destroy", self.destroy)
         window.add(top_box)
         window.show_all()
-        self.cmd_manager = CommandManager(self.handle_new_events, self.last_timestamp, self.api)
     
     def remove_songs(self, indexes):
         self.cmd_manager.add(Command(self.api.delete_songs, [indexes], requires_timestamp=True))
@@ -106,26 +131,60 @@ class ShaplimGTK:
     
     def load_playlist(self):
         playlist_data = self.api.show_playlist()
-        self.last_timestamp = playlist_data["timestamp"]
         for song in playlist_data["songs"]:
             self.playlist.append([None, song])
         if playlist_data["current"] != -1:
             self.set_current_song(playlist_data["current"])
+        return playlist_data["timestamp"]
     
     def reload_state(self):
         self.cmd_manager.reload_state()
     
+    def set_current_song_data(self, data):
+        self.info_controls["title"].set_text(data["title"] or "Unknown")
+        self.info_controls["artist"].set_text(data["artist"] or "Unknown")
+        self.info_controls["album"].set_text(data["album"] or "Unknown")
+        if data["picture_mime"] == "image/jpeg":
+            loader = gtk.gdk.PixbufLoader("jpeg")
+        elif data["picture_mime"] == "image/png":
+            loader = gtk.gdk.PixbufLoader("png")
+        else:
+            # TODO: Replace with nice default pic plx
+            self.info_controls["picture"].set_from_pixbuf(gtk.gdk.pixbuf_new_from_file("images/no-logo.png"))
+            return
+        loader.write(data["picture"].decode('base64'))
+        loader.close()
+        pixbuf = loader.get_pixbuf().scale_simple(120, 120, gtk.gdk.INTERP_BILINEAR)
+        self.info_controls["picture"].set_from_pixbuf(pixbuf)
+
     def set_current_song(self, index):
         if self.last_selected_index is not None:
             iterator = self.playlist.get_iter(self.last_selected_index)
             self.playlist.set_value(iterator, 0, None)
         if index == -1:
             self.last_selected_index = None
+            self.set_current_song_data(
+                {
+                    "title" : "-",
+                    "artist" : "-",
+                    "title" : "-",
+                    "album" : "-",
+                    "picture_mime" : ""
+                }
+            )
             return
         self.last_selected_index = index
         iterator = self.playlist.get_iter(index)
         pixbuf = self.playlist_view.render_icon(gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_MENU)
         self.playlist.set_value(iterator, 0, pixbuf)
+        self.cmd_manager.add(
+            Command(
+                self.api.song_info, 
+                [self.playlist[index][1]], 
+                requires_timestamp=False, 
+                callback=self.set_current_song_data
+            )
+        )
     
     def handle_new_events(self, events):
         for event in events:
@@ -195,6 +254,31 @@ class ShaplimGTK:
         box.pack_start(self.make_controls_box(), False)
         return box
     
+    def make_song_information_frame(self):
+        vbox = gtk.VBox()
+        table = gtk.Table(3, 2)
+        self.info_controls = {
+            "title" : make_song_control_label("-"),
+            "artist" : make_song_control_label("-"),
+            "album" : make_song_control_label("-"),
+            "picture" : gtk.Image()
+        }
+        table.set_row_spacings(5)
+        table.attach(make_song_info_label("<b>Title</b>:"), 0, 1, 0, 1)
+        table.attach(self.info_controls["title"], 1, 2, 0, 1)
+        table.attach(make_song_info_label("<b>Artist</b>:"), 0, 1, 1, 2)
+        table.attach(self.info_controls["artist"], 1, 2, 1, 2)
+        table.attach(make_song_info_label("<b>Album</b>:"), 0, 1, 2, 3)
+        table.attach(self.info_controls["album"], 1, 2, 2, 3)
+        
+        self.info_controls["picture"].set_property("ypad", 2)
+        
+        vbox.pack_start(make_markup_label("<b>Song information</b>"))
+        vbox.pack_start(gtk.HSeparator(), False)
+        vbox.pack_start(self.info_controls["picture"], False)
+        vbox.pack_start(table, padding=3, fill=False)
+        return vbox
+    
     def make_playlist(self):
         self.playlist = gtk.ListStore(gtk.gdk.Pixbuf, str)
         self.playlist_view = gtk.TreeView(self.playlist)
@@ -218,11 +302,10 @@ class ShaplimGTK:
         scroll.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
         scroll.add(self.playlist_view)
         
-        label = gtk.Label("<b>Playlist</b>") 
-        label.set_use_markup(True)
-        
         vbox = gtk.VBox()
-        vbox.pack_start(label, False)
+        vbox.pack_start(self.make_song_information_frame(), False)
+        vbox.pack_start(gtk.HSeparator(), False)
+        vbox.pack_start(make_markup_label("<b>Playlist</b>"), False)
         vbox.pack_start(gtk.HSeparator(), False)
         vbox.pack_start(scroll, True)
         return vbox
@@ -306,8 +389,8 @@ class ShaplimGTK:
         self.reload_state()
     
     def on_playlist_element_activated(self, treeview, path, view_column):
-        return False
-
+        self.cmd_manager.add(Command(self.api.set_current_song, [path[0]], requires_timestamp=True))
+        self.reload_state()
 
 def retrieve_shared_name(column, cell, model, iter):
     pyobj = model.get_value(iter, 0)
