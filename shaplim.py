@@ -109,6 +109,8 @@ class ShaplimGTK:
         window = gtk.Window()
         window.set_default_size(800, 600)
         self.last_selected_index = None
+        self.current_song_length = 0
+        self.is_playing = False
         
         top_box = self.make_top_box()
         
@@ -120,6 +122,13 @@ class ShaplimGTK:
         window.connect("destroy", self.destroy)
         window.add(top_box)
         window.show_all()
+        self.timer = None
+    
+    def song_bar_timeout(self):
+        if self.current_song_length != 0 and self.is_playing:
+            self.song_bar.set_value(self.song_bar.get_value() + 1)
+            self.set_label_song_time(self.current_song_seconds, int(self.song_bar.get_value()))
+        return True
     
     def remove_songs(self, indexes):
         self.cmd_manager.add(Command(self.api.delete_songs, [indexes], requires_timestamp=True))
@@ -140,10 +149,40 @@ class ShaplimGTK:
     def reload_state(self):
         self.cmd_manager.reload_state()
     
+    def set_default_song_data(self):
+        self.set_current_song_data(
+            {
+                "title" : "-",
+                "artist" : "-",
+                "title" : "-",
+                "album" : "-",
+                "picture_mime" : "",
+                "length" : 0
+            }
+        )
+    
+    def set_song_bar_status(self, data):
+        self.is_playing = data["status"] == "playing"
+        self.song_bar.set_value(int(data["current_song_percent"] * self.current_song_length))
+        self.set_label_song_time(self.current_song_seconds, int(self.song_bar.get_value()))
+        if self.timer is None:
+            self.timer = gobject.timeout_add(1000, self.song_bar_timeout)
+    
+    def set_label_song_time(self, label, song_time):
+        seconds = song_time % 60
+        label.set_text("{0}:{1}".format(song_time / 60, seconds if seconds >= 10 else '0' + str(seconds)))
+    
+    def set_current_song_length(self, length):
+        self.current_song_length = length
+        self.song_bar.set_upper(length)
+        self.set_label_song_time(self.total_song_seconds, length)
+        self.cmd_manager.add(Command(self.api.player_status, callback=self.set_song_bar_status))
+    
     def set_current_song_data(self, data):
         self.info_controls["title"].set_text(data["title"] or "Unknown")
         self.info_controls["artist"].set_text(data["artist"] or "Unknown")
         self.info_controls["album"].set_text(data["album"] or "Unknown")
+        self.set_current_song_length(data["length"])
         if data["picture_mime"] == "image/jpeg":
             loader = gtk.gdk.PixbufLoader("jpeg")
         elif data["picture_mime"] == "image/png":
@@ -163,15 +202,9 @@ class ShaplimGTK:
             self.playlist.set_value(iterator, 0, None)
         if index == -1:
             self.last_selected_index = None
-            self.set_current_song_data(
-                {
-                    "title" : "-",
-                    "artist" : "-",
-                    "title" : "-",
-                    "album" : "-",
-                    "picture_mime" : ""
-                }
-            )
+            self.is_playing = False
+            self.current_song_length = 0
+            self.set_default_song_data()
             return
         self.last_selected_index = index
         iterator = self.playlist.get_iter(index)
@@ -196,10 +229,19 @@ class ShaplimGTK:
             elif event["type"] == "delete_songs":
                 indexes = event["indexes"]
                 indexes.sort(reverse=True)
+                removed_current = self.last_selected_index in indexes
                 for index in indexes:
+                    # Any index
+                    if index < self.last_selected_index:
+                        self.last_selected_index -= 1
                     self.playlist.remove(self.playlist[index].iter)
-                if self.last_selected_index in indexes:
+                if removed_current:
                     self.last_selected_index = None
+                    self.set_default_song_data()
+            elif event["type"] == "play":
+                self.is_playing = True
+            elif event["type"] == "pause":
+                self.is_playing = False
     
     def prev_button_clicked(self, widget, event=None):
         self.cmd_manager.add(Command(self.api.previous_song))
@@ -225,9 +267,24 @@ class ShaplimGTK:
         toolbar.append_item("", "Next song","",stock_toolbar_image(gtk.STOCK_MEDIA_NEXT), self.next_button_clicked)
         toolbar.set_icon_size(gtk.ICON_SIZE_DIALOG)
         
+        self.song_bar = gtk.Adjustment(0.0, 0.0, 100.0, 1.0, 1.0, 0.0)
+        scale = gtk.HScale(self.song_bar)
+        scale.set_update_policy(gtk.UPDATE_CONTINUOUS)
+        scale.set_draw_value(False)
+        
+        hbox = gtk.HBox()
+        self.current_song_seconds = make_markup_label("0:00")
+        self.total_song_seconds = make_markup_label("0:00")
+        hbox.pack_start(self.current_song_seconds, False)
+        hbox.pack_start(scale, True)
+        hbox.pack_start(self.total_song_seconds, False)
+        
         alignment = gtk.Alignment(xalign=0.5)
         alignment.add(toolbar)
-        return alignment
+        vbox = gtk.VBox()
+        vbox.pack_start(hbox, True, True)
+        vbox.pack_start(alignment)
+        return vbox
     
     def make_shared_folders_view_control(self):
         self.shared_content = gtk.ListStore(str, gtk.gdk.Pixbuf, bool)
@@ -251,6 +308,7 @@ class ShaplimGTK:
     def make_controls_and_folders_box(self):
         box = gtk.VBox(False)
         box.pack_start(self.make_shared_folders_view_control(), True)
+        box.pack_start(gtk.HSeparator(), False)
         box.pack_start(self.make_controls_box(), False)
         return box
     
@@ -261,6 +319,7 @@ class ShaplimGTK:
             "title" : make_song_control_label("-"),
             "artist" : make_song_control_label("-"),
             "album" : make_song_control_label("-"),
+            "length" : 0,
             "picture" : gtk.Image()
         }
         table.set_row_spacings(5)
@@ -316,7 +375,7 @@ class ShaplimGTK:
         box.pack_start(self.make_playlist(), True)
         
         paned = gtk.HPaned()
-        paned.pack1(self.make_controls_and_folders_box(), True)
+        paned.pack1(self.make_controls_and_folders_box(), True, True)
         paned.pack2(box, False)
         return paned
     
