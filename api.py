@@ -37,6 +37,10 @@ class API:
         #print line
         return json.loads(line)
     
+    def disconnect(self):
+        self.__socket.shutdown(socket.SHUT_RDWR)
+        self.__socket.close()
+    
     def pause(self):
         return self.__send_command('pause')
     
@@ -53,9 +57,9 @@ class API:
         return self.__send_command('playlist_mode')
     
     def set_playlist_mode(self, mode):
-        if len(mode) != 1 or mode[0] not in ['shuffle', 'default']:
+        if mode not in ['shuffle', 'default']:
             raise Exception('Invalid mode')
-        return self.__send_command('set_playlist_mode', mode[0])
+        return self.__send_command('set_playlist_mode', mode)
 
     def clear_playlist(self):
         return self.__send_command('clear_playlist')
