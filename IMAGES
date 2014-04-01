@@ -2,15 +2,16 @@
 
 All of the images used are licensed under the Creative Commons license.
 
-* images/shuffle.png:
-    - http://www.interactivemania.com/
-* images/previous.png:
-    - http://www.interactivemania.com/
-* images/next.png:
-    - http://www.interactivemania.com/
-* images/play.png:
-    - http://www.interactivemania.com/
-* images/pause.png:
-    - http://www.interactivemania.com/
-* images/no-logo.png:
-    - http://www.interactivemania.com/
+- The following images, licensed under the Creative Commons license,
+were taken from http://www.interactivemania.com/:
+    * images/shuffle.png:
+    * images/previous.png:
+    * images/next.png:
+    * images/play.png:
+    * images/pause.png:
+    * images/no-logo.png:
+
+- The following images, licensed under GPL3, were taken from the Mint-X
+gnome theme:
+    * images/folder.svg
+    * images/song.png

@@ -19,6 +19,7 @@ import api
 import gtk
 import time
 import gobject
+import signal
 from server_selection_window import ServerSelectionWindow
 from command_manager import Command, CommandManager
 from config_manager import ConfigurationManager
@@ -46,7 +47,7 @@ def make_song_info_label(text):
     label = make_markup_label(text)
     label.set_alignment(xalign=0, yalign=0)
     align = gtk.Alignment()
-    align.set_padding(0, 0, 20, 0)
+    align.set_padding(0, 0, 20, 5)
     align.add(label)
     return align 
 
@@ -331,6 +332,8 @@ class ShaplimGTK:
         self.shuffle_button_handle_id = self.shuffle_button.connect("toggled", self.change_playlist_mode)
         toolbar.insert(self.shuffle_button, 0)
         toolbar.set_icon_size(gtk.ICON_SIZE_BUTTON)
+        #toolbar.set_property("shadow-type", gtk.SHADOW_NONE)
+        
         return toolbar
     
     def make_playlist(self):
@@ -379,16 +382,16 @@ class ShaplimGTK:
     def show_shared_content(self, dirs, files, parent=None):
         self.shared_content.clear()
         if parent is not None:
-            pixbuf = self.shared_content_view.render_icon(gtk.STOCK_DIRECTORY, gtk.ICON_SIZE_DIALOG)
+            pixbuf = self.image_manager.icons["folder"].get_pixbuf()
             self.shared_content.append([parent + "/..", pixbuf, True])
             parent = parent + '/'
         else:
             parent = ''
         for directory in dirs:
-            pixbuf = self.shared_content_view.render_icon(gtk.STOCK_DIRECTORY, gtk.ICON_SIZE_DIALOG)
+            pixbuf = self.image_manager.icons["folder"].get_pixbuf()
             self.shared_content.append([parent + directory, pixbuf, True])
         for f in files:
-            pixbuf = self.shared_content_view.render_icon(gtk.STOCK_FILE, gtk.ICON_SIZE_DIALOG)
+            pixbuf = self.image_manager.icons["song"].get_pixbuf()
             self.shared_content.append([parent + f, pixbuf, False])
     
     def get_file_name(self, path):
@@ -474,4 +477,5 @@ def retrieve_filename(treeviewcolumn, cell, model, iter):
 
 if __name__ == "__main__":
     app = ShaplimGTK()
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
     gtk.main()
