@@ -65,7 +65,7 @@ class CommandManager:
                         params.append(self.last_timestamp)
                     result = apply(cmd.function, params)
                     if cmd.callback:
-                        cmd.callback(result)
+                        gobject.idle_add(cmd.callback, result)
                 self.queue.task_done()
             except Queue.Empty as ex:
                 if not self.running:

@@ -24,6 +24,7 @@ from server_selection_window import ServerSelectionWindow
 from command_manager import Command, CommandManager
 from config_manager import ConfigurationManager
 from image_manager import ImageManager
+from shared_media import SharedMediaWidget
 
 gobject.threads_init()
 
@@ -89,7 +90,7 @@ class ShaplimGTK:
         self.cmd_manager = CommandManager(self.handle_new_events, self.api)
         timestamp = self.load_playlist()
         self.cmd_manager.run(timestamp)
-        self.show_shared_content(self.api.list_shared_directories()["directories"], [])
+        self.shared_media.show_shared_content(self.api.list_shared_directories()["directories"], [])
         if connect_automatically:
             self.config_manager.server_data = (address, port)
             self.config_manager.save_configuration()
@@ -269,29 +270,10 @@ class ShaplimGTK:
         vbox.pack_start(alignment)
         return vbox
     
-    def make_shared_folders_view_control(self):
-        self.shared_content = gtk.ListStore(str, gtk.gdk.Pixbuf, bool)
-        self.shared_content_view = gtk.IconView(self.shared_content)
-        self.shared_content_view.set_selection_mode(gtk.SELECTION_MULTIPLE)
-        self.shared_content_view.set_text_column(0)
-        self.shared_content_view.set_pixbuf_column(1)
-        self.shared_content_view.set_item_width(120)
-        self.shared_content_view.connect('key-press-event', self.shared_content_key_press)
-        self.shared_content_view.set_size_request(550, self.shared_content_view.get_size_request()[1])
-        
-        cell = self.shared_content_view.get_cells()[0]
-        self.shared_content_view.set_cell_data_func(cell, retrieve_shared_name)
-        
-        self.shared_content_view.connect("item-activated", self.shared_content_clicked)
-        
-        scroll = gtk.ScrolledWindow()
-        scroll.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
-        scroll.add(self.shared_content_view)
-        return scroll
-    
     def make_controls_and_folders_box(self):
         box = gtk.VBox(False)
-        box.pack_start(self.make_shared_folders_view_control(), True)
+        self.shared_media = SharedMediaWidget(self)
+        box.pack_start(self.shared_media, True)
         box.pack_start(gtk.HSeparator(), False)
         box.pack_start(self.make_controls_box(), False)
         return box
@@ -332,7 +314,6 @@ class ShaplimGTK:
         self.shuffle_button_handle_id = self.shuffle_button.connect("toggled", self.change_playlist_mode)
         toolbar.insert(self.shuffle_button, 0)
         toolbar.set_icon_size(gtk.ICON_SIZE_BUTTON)
-        #toolbar.set_property("shadow-type", gtk.SHADOW_NONE)
         
         return toolbar
     
@@ -379,27 +360,6 @@ class ShaplimGTK:
         paned.pack2(box, False)
         return paned
     
-    def show_shared_content(self, dirs, files, parent=None):
-        self.shared_content.clear()
-        if parent is not None:
-            pixbuf = self.image_manager.icons["folder"].get_pixbuf()
-            self.shared_content.append([parent + "/..", pixbuf, True])
-            parent = parent + '/'
-        else:
-            parent = ''
-        for directory in dirs:
-            pixbuf = self.image_manager.icons["folder"].get_pixbuf()
-            self.shared_content.append([parent + directory, pixbuf, True])
-        for f in files:
-            pixbuf = self.image_manager.icons["song"].get_pixbuf()
-            self.shared_content.append([parent + f, pixbuf, False])
-    
-    def get_file_name(self, path):
-        return path.split('/')[-1]
-    
-    def get_dir_name(self, path):
-        return '/'.join(path.split('/')[:-1])
-    
     # Events
     
     def playlist_key_press(self, view, event):
@@ -407,45 +367,6 @@ class ShaplimGTK:
             (model, pathlist) = self.playlist_view.get_selection().get_selected_rows()
             pathlist = map(lambda i: i[0], pathlist)
             self.remove_songs(pathlist)
-        
-    def shared_content_key_press(self, view, event):
-        # This is Enter, fix me plx
-        if event.keyval == 65293:
-            self.add_selected_songs()
-            return True
-        return False
-    
-    def shared_content_clicked(self, widget, item):
-        model = widget.get_model()
-        # Is it a directory?
-        if model[item][2]:
-            # Check for ..
-            directory = model[item][0]
-            if directory.split('/')[-1] == '..':
-                directory = '/'.join(directory.split('/')[:-2])
-            if directory == '':
-                data = self.api.list_shared_directories()
-                data["files"] = ''
-                directory = None
-            else:
-                data = self.api.list_directory(directory)
-            self.show_shared_content(data["directories"], data["files"], directory)
-        else:
-            self.add_selected_songs()
-
-    def add_selected_songs(self):
-        selected = self.shared_content_view.get_selected_items()
-        selected = filter(lambda i: not self.shared_content[i][2], selected)
-        selected = map(lambda i: self.shared_content[i[0]][0], selected)
-        dir_name = set(map(self.get_dir_name, selected))
-        if len(dir_name) > 1:
-            return False
-        dir_name = dir_name.pop()
-        file_names = map(self.get_file_name, selected)
-        file_names.sort()
-        self.shared_content_view.unselect_all()
-        self.cmd_manager.add(Command(self.api.add_shared_songs, [ dir_name, file_names ]))
-        self.reload_state()
     
     def playlist_element_activated(self, treeview, path, view_column):
         self.cmd_manager.add(Command(self.api.set_current_song, [path[0]], requires_timestamp=True))
