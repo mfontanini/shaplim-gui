@@ -17,6 +17,7 @@
 import sys
 import api
 import gtk
+import pango
 import time
 import gobject
 import signal
@@ -41,7 +42,7 @@ def make_markup_label(text):
 def make_song_control_label(text):
     label = make_markup_label(text)
     label.set_alignment(xalign=0, yalign=0)
-    
+    label.set_property("ellipsize", pango.ELLIPSIZE_END)
     return label 
 
 def make_song_info_label(text):
@@ -87,10 +88,10 @@ class ShaplimGTK:
         self.last_selected_index = None
         self.current_song_length = 0
         self.api = api.API(address, port)
+        self.shared_media.reset()
         self.cmd_manager = CommandManager(self.handle_new_events, self.api)
         timestamp = self.load_playlist()
         self.cmd_manager.run(timestamp)
-        self.shared_media.show_shared_content(self.api.list_shared_directories()["directories"], [])
         if connect_automatically:
             self.config_manager.server_data = (address, port)
             self.config_manager.save_configuration()
@@ -289,11 +290,12 @@ class ShaplimGTK:
             "picture" : gtk.Image()
         }
         table.set_row_spacings(5)
-        table.attach(make_song_info_label("<b>Title</b>:"), 0, 1, 0, 1)
+        table.set_homogeneous(False)
+        table.attach(make_song_info_label("<b>Title</b>:"), 0, 1, 0, 1, xoptions=gtk.FILL)
         table.attach(self.info_controls["title"], 1, 2, 0, 1)
-        table.attach(make_song_info_label("<b>Artist</b>:"), 0, 1, 1, 2)
+        table.attach(make_song_info_label("<b>Artist</b>:"), 0, 1, 1, 2, xoptions=gtk.FILL)
         table.attach(self.info_controls["artist"], 1, 2, 1, 2)
-        table.attach(make_song_info_label("<b>Album</b>:"), 0, 1, 2, 3)
+        table.attach(make_song_info_label("<b>Album</b>:"), 0, 1, 2, 3, xoptions=gtk.FILL)
         table.attach(self.info_controls["album"], 1, 2, 2, 3)
         
         self.info_controls["picture"].set_property("ypad", 2)
