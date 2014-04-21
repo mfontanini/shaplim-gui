@@ -25,7 +25,9 @@ class ImageManager:
             "pause" : self.make_image("images/pause.png"),
             "no_logo" : self.make_image_from_pixbuf("images/no-logo.png", (120, 120)),
             "song" : self.make_image("images/song.png"),
-            "folder" : self.make_image("images/folder.svg")
+            "folder" : self.make_image("images/folder.svg"),
+            "back" : self.make_image("images/back.png"),
+            "forward" : self.make_image("images/forward.png"),
         }
     
     def make_image(self, path):

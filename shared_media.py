@@ -16,6 +16,7 @@
 import gtk
 import time
 from command_manager import Command
+from youtube_widget import YoutubeWidget
 
 class SharedMediaPanelWidget(gtk.IconView):
     def __init__(self, core, parent):
@@ -36,9 +37,6 @@ class SharedMediaPanelWidget(gtk.IconView):
         self.connect("item-activated", self.shared_content_activated)
         self.connect("button-release-event", self.button_released)
         
-        scroll = gtk.ScrolledWindow()
-        scroll.set_policy(gtk.POLICY_NEVER, gtk.POLICY_AUTOMATIC)
-        self.connect('key_press_event', self.key_press)
         self.current_strings = []
         self.press_timestamp = 0
         self.current_string = ''
@@ -87,8 +85,10 @@ class SharedMediaPanelWidget(gtk.IconView):
         if event.keyval in trigger_keys:
             selected = self.get_selected_items()
             if any(selected):
+                directory = self.current_directory
                 self.shared_content_activated(self, selected[0])
-                if not self.control_held:
+                self.current_string = ''
+                if not self.control_held and directory != self.current_directory:
                     self.select_cell(0)
             return True
         elif event.keyval == gtk.gdk.keyval_from_name("w") and self.control_held:
@@ -100,6 +100,29 @@ class SharedMediaPanelWidget(gtk.IconView):
         elif event.keyval == gtk.gdk.keyval_from_name("Page_Down") and self.control_held:
             self.tabs.next_page()
             return True
+        elif event.keyval == gtk.gdk.keyval_from_name("c") and self.control_held:
+            self.current_string = ''
+            return True
+        
+        if event.string != '':
+            if not self.press_timestamp_valid():
+                self.current_string = ''
+            self.save_press_timestamp()
+            self.current_string += event.string.lower()
+            best_result = self.find_largest_item_match(self.current_string)
+            if best_result is not None:
+                # If we're not in the root, there's a '..'
+                if self.current_directory != '':
+                    best_result += 1
+                self.unselect_all()
+                self.select_cell(best_result)
+                self.scroll_to_path((best_result, ), True, 0.5, 0.5)
+            return True
+        elif event.keyval == gtk.gdk.keyval_from_name("BackSpace"):
+            if self.current_directory != '':
+                self.load_directory(get_dir_name(self.current_directory))
+                self.select_cell(0)
+                return True
         return False
     
     def shared_content_activated(self, widget, item):
@@ -143,25 +166,6 @@ class SharedMediaPanelWidget(gtk.IconView):
             if self.current_items[i].startswith(searched):
                 return i
         return None
-
-    def key_press(self, widget, event):
-        if event.string != '':
-            if not self.press_timestamp_valid():
-                self.current_string = ''
-            self.save_press_timestamp()
-            self.current_string += event.string.lower()
-            best_result = self.find_largest_item_match(self.current_string)
-            if best_result is not None:
-                # If we're not in the root, there's a '..'
-                if self.current_directory != '':
-                    best_result += 1
-                self.unselect_all()
-                self.select_cell(best_result)
-                self.scroll_to_path((best_result, ), True, 0.5, 0.5)
-        elif event.keyval == gtk.gdk.keyval_from_name("BackSpace"):
-            if self.current_directory != '':
-                self.load_directory(get_dir_name(self.current_directory))
-                self.select_cell(0)
                 
                 
 
@@ -169,6 +173,8 @@ class SharedMediaWidget(gtk.Notebook):
     def __init__(self, core):
         gtk.Notebook.__init__(self)
         self.set_tab_pos(gtk.POS_TOP)
+        self.youtube_widget = YoutubeWidget(core)
+        self.append_page(self.youtube_widget, gtk.Label("Youtube"))
         self.core = core
     
     def make_shared_content_view(self):
@@ -203,14 +209,17 @@ class SharedMediaWidget(gtk.Notebook):
     def reset(self):
         self.labels = {}
         widget = self.add_tab('')
-        self.set_show_tabs(False)
+        #self.set_show_tabs(False)
         self.labels[widget.get_child()].set_text('Home')
     
     def add_tab(self, directory, select_first=False):
         widget = self.make_shared_content_view()
         tab_label = self.make_label(widget, get_file_name(directory) or 'Home')
         
-        self.append_page(widget, tab_label)
+        if len(self.get_children()) == 1:
+            self.insert_page(widget, tab_label, 0)
+        else:
+            self.append_page(widget, tab_label)
         widget.get_child().load_directory(directory)
         self.set_show_tabs(True)
         self.show_all()

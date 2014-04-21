@@ -93,3 +93,6 @@ class API:
     def add_shared_songs(self, base_path, songs):
         json_params = { 'base_path' : base_path, 'songs' : songs }
         return self.__send_command('add_shared_songs', json_params)
+    
+    def add_youtube_songs(self, songs):
+        return self.__send_command('add_youtube_songs', songs)

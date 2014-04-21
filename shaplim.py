@@ -163,7 +163,7 @@ class ShaplimGTK:
         self.info_controls["artist"].set_text(data["artist"] or "Unknown")
         self.info_controls["album"].set_text(data["album"] or "Unknown")
         self.set_current_song_length(data["length"])
-        if data["picture_mime"] == "image/jpeg":
+        if data["picture_mime"] == "image/jpeg" or data["picture_mime"] == "image/jpg":
             loader = gtk.gdk.PixbufLoader("jpeg")
         elif data["picture_mime"] == "image/png":
             loader = gtk.gdk.PixbufLoader("png")
@@ -394,7 +394,8 @@ def retrieve_shared_name(column, cell, model, iter):
 def retrieve_filename(treeviewcolumn, cell, model, iter):
     pyobj = model.get_value(iter, 1)
     name = str(pyobj).split('/')[-1]
-    name = '.'.join(name.split('.')[:-1])
+    if '.' in name:
+        name = '.'.join(name.split('.')[:-1])
     cell.set_property('text', name)
     return
 
