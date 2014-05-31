@@ -103,10 +103,12 @@ class YoutubeVideoWidget(gtk.VBox):
         self.content_view.connect("item-activated", self.video_activated)
         self.api = None
         self.next_page_token = self.prev_page_token = None
+        self.search_button.set_sensitive(False)
         self.async_processor.call_function(self.youtube_api_builder, self.set_api)
     
     def set_api(self, api):
         self.api = api
+        self.search_button.set_sensitive(True)
     
     def make_search_input_box(self):
         box = gtk.HBox()

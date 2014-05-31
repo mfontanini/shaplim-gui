@@ -103,7 +103,9 @@ class SharedMediaPanelWidget(gtk.IconView):
         elif event.keyval == gtk.gdk.keyval_from_name("c") and self.control_held:
             self.current_string = ''
             return True
-        
+        elif event.string == 'a' and self.control_held:
+            self.select_all()
+            return True
         if event.string != '':
             if not self.press_timestamp_valid():
                 self.current_string = ''
@@ -209,21 +211,22 @@ class SharedMediaWidget(gtk.Notebook):
     def reset(self):
         self.labels = {}
         widget = self.add_tab('')
-        #self.set_show_tabs(False)
         self.labels[widget.get_child()].set_text('Home')
     
     def add_tab(self, directory, select_first=False):
         widget = self.make_shared_content_view()
         tab_label = self.make_label(widget, get_file_name(directory) or 'Home')
         
+        widget.show()
         if len(self.get_children()) == 1:
             self.insert_page(widget, tab_label, 0)
+            self.set_current_page(0)
         else:
             self.append_page(widget, tab_label)
+            self.set_current_page(-1)
         widget.get_child().load_directory(directory)
         self.set_show_tabs(True)
         self.show_all()
-        self.set_current_page(-1)
         self.set_tab_reorderable(widget, True)
         widget.get_child().grab_focus()
         if select_first:
